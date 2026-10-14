@@ -126,9 +126,6 @@ svg{width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:2;stroke-l
     <button class="btn icon" id="menuBtn" title="Menü"><svg viewBox="0 0 24 24"><circle cx="12" cy="5" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="12" cy="19" r="1"/></svg></button>
   </header>
   <div class="menu glass" id="menu">
-    <button data-act="kdrive">☁️ kDrive-Sync einrichten</button>
-    <button data-act="pull">⬇️ Jetzt aus kDrive laden</button>
-    <button data-act="push">⬆️ Jetzt in kDrive speichern</button>
     <button data-act="import">📄 Telefonliste importieren (Bild / PDF)</button>
     <button data-act="export">💾 Sicherung exportieren (JSON)</button>
     <button data-act="restore">📂 Sicherung laden (JSON)</button>
@@ -201,25 +198,6 @@ svg{width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:2;stroke-l
   </div>
 </div>
 
-<!-- kDrive -->
-<div class="overlay" id="kdDlg">
-  <div class="sheet glass">
-    <div class="top">
-      <div class="grow"><h2>kDrive-Sync</h2></div>
-      <button class="btn icon" data-close title="Schließen"><svg viewBox="0 0 24 24"><path d="M18 6 6 18M6 6l12 12"/></svg></button>
-    </div>
-    <p class="hint">Die Liste wird als JSON-Datei in deinem kDrive-Ordner gespeichert und beim Öffnen der App von dort geladen. Token und Ordner werden nur auf diesem Gerät gespeichert – nie im Code auf GitHub.</p>
-    <div class="field"><label>API-Token (Scope „drive“)</label><input id="kdToken" type="password" autocomplete="off" placeholder="Token einfügen"></div>
-    <div class="field"><label>Ordner-Adresse aus kDrive (Ordner im Browser öffnen, Adresse kopieren)</label><input id="kdUrl" placeholder="https://ksuite.infomaniak.com/…/kdrive/app/drive/12345/files/67890"></div>
-    <div class="field"><label>Dateiname</label><input id="kdFile" placeholder="telefonliste.json"></div>
-    <div id="kdStatus" class="hint"></div>
-    <div class="actions">
-      <button class="btn danger" id="kdOff">Sync ausschalten</button>
-      <button class="btn primary" id="kdSave">Speichern &amp; testen</button>
-    </div>
-  </div>
-</div>
-
 <input type="file" id="restoreFile" accept="application/json,.json" hidden>
 <div class="toast glass" id="toast"></div>
 
@@ -240,7 +218,7 @@ function migrate(p){ // ältere Einträge: Bereich steckte in "Abteilung", z. B.
   return p;
 }
 function load(){try{return (JSON.parse(localStorage.getItem(KEY))||[]).map(migrate)}catch(e){return []}}
-function persist(){try{localStorage.setItem(KEY,JSON.stringify(people))}catch(e){toast('Speichern fehlgeschlagen')}kdSchedulePush()}
+function persist(){try{localStorage.setItem(KEY,JSON.stringify(people))}catch(e){toast('Speichern fehlgeschlagen')}}
 function uid(){return Date.now().toString(36)+Math.random().toString(36).slice(2,7)}
 function esc(s){return String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
 function fullName(p){return [p.first,p.last].filter(Boolean).join(' ')||'(ohne Namen)'}
@@ -351,17 +329,11 @@ $('#menuBtn').onclick=e=>{e.stopPropagation();$('#menu').classList.toggle('open'
 document.addEventListener('click',e=>{if(!e.target.closest('#menu'))$('#menu').classList.remove('open')});
 $('#menu').addEventListener('click',e=>{
   const act=e.target.closest('button')?.dataset.act;$('#menu').classList.remove('open');
-  if(act==='kdrive')kdOpen();
-  if(act==='pull')kdPull(true);
-  if(act==='push')kdPush(true);
   if(act==='import')openImport();
   if(act==='export')exportJSON();
   if(act==='restore')$('#restoreFile').click();
   if(act==='clear'&&confirm('Wirklich ALLE Einträge löschen?')){people=[];persist();render()}
 });
-function normalizeList(d){
-  return d.map(p=>({id:p.id||uid(),first:p.first||'',last:p.last||'',group:p.group,dept:p.dept||'',numbers:Array.isArray(p.numbers)?p.numbers:[],email:p.email||'',birth:p.birth||'',notes:p.notes||''})).map(migrate);
-}
 function exportJSON(){
   const blob=new Blob([JSON.stringify(people,null,2)],{type:'application/json'});
   const a=document.createElement('a');a.href=URL.createObjectURL(blob);
@@ -371,7 +343,7 @@ function exportJSON(){
 $('#restoreFile').onchange=async e=>{
   const f=e.target.files[0];if(!f)return;
   try{const d=JSON.parse(await f.text());if(!Array.isArray(d))throw 0;
-    people=normalizeList(d);
+    people=d.map(p=>({id:p.id||uid(),first:p.first||'',last:p.last||'',group:p.group,dept:p.dept||'',numbers:Array.isArray(p.numbers)?p.numbers:[],email:p.email||'',birth:p.birth||'',notes:p.notes||''})).map(migrate);
     persist();render();toast(people.length+' Einträge geladen');
   }catch(err){toast('Ungültige Sicherungsdatei')}
   e.target.value='';
@@ -533,125 +505,13 @@ $('#impApply').onclick=()=>{
   persist();render();close('#importDlg');toast(added+' neu, '+updated+' ergänzt');
 };
 
-/* ---------- kDrive-Sync (Infomaniak API) ---------- */
-// Token + Ordner liegen nur im localStorage dieses Geräts, nie im Code.
-const KD_KEY=KEY+'-kdrive',KD_DIRTY=KEY+'-dirty',KD_API='https://api.infomaniak.com';
-function kdCfg(){try{return JSON.parse(localStorage.getItem(KD_KEY))}catch(e){return null}}
-function kdSetCfg(c){try{c?localStorage.setItem(KD_KEY,JSON.stringify(c)):localStorage.removeItem(KD_KEY)}catch(e){}}
-function kdDirty(v){try{if(v===undefined)return localStorage.getItem(KD_DIRTY)==='1';v?localStorage.setItem(KD_DIRTY,'1'):localStorage.removeItem(KD_DIRTY)}catch(e){return false}}
-let kdTimer=null,kdBusy=false;
-
-async function kdFetch(c,path,opt={}){
-  let r;
-  try{r=await fetch(KD_API+path,{...opt,headers:{Authorization:'Bearer '+c.token,...(opt.headers||{})}})}
-  catch(e){throw new Error(navigator.onLine?'kDrive nicht erreichbar – der Browser blockiert evtl. den Zugriff (CORS)':'Offline – keine Verbindung')}
-  if(!r.ok){
-    let msg='';try{const j=await r.json();msg=j?.error?.description||j?.error?.code||''}catch(e){}
-    if(r.status===401||r.status===403)throw new Error('Token ungültig oder ohne Drive-Berechtigung'+(msg?' ('+msg+')':''));
-    if(r.status===404)throw new Error('Ordner/Datei in kDrive nicht gefunden');
-    throw new Error('kDrive-Fehler '+r.status+(msg?': '+msg:''));
-  }
-  return r;
-}
-async function kdFindFile(c){ // Datei im Ordner suchen → id oder null
-  let params='';
-  for(let i=0;i<50;i++){
-    const j=await (await kdFetch(c,`/3/drive/${c.drive}/files/${c.folder}/files${params}`)).json();
-    const items=Array.isArray(j.data)?j.data:[];
-    const hit=items.find(f=>f.name===c.file&&f.type!=='dir'&&f.type!=='directory');
-    if(hit)return hit.id;
-    if(j.has_more&&j.cursor)params='?cursor='+encodeURIComponent(j.cursor);
-    else if(j.pages&&(j.page||1)<j.pages)params='?page='+((j.page||1)+1);
-    else return null;
-  }
-  return null;
-}
-async function kdPush(manual){
-  const c=kdCfg();if(!c){if(manual)kdOpen();return}
-  if(kdBusy){kdSchedulePush();return}
-  kdBusy=true;
-  try{
-    const body=new TextEncoder().encode(JSON.stringify(people,null,2));
-    const q=new URLSearchParams({directory_id:c.folder,file_name:c.file,total_size:String(body.length),conflict:'version'});
-    const r=await kdFetch(c,`/3/drive/${c.drive}/upload?`+q,{method:'POST',headers:{'Content-Type':'application/octet-stream'},body});
-    try{const j=await r.json();const id=j?.data?.file?.id??j?.data?.id;if(id){c.fileId=id;kdSetCfg(c)}}catch(e){}
-    kdDirty(false);
-    if(manual)toast('In kDrive gespeichert');
-    return true;
-  }catch(e){toast('kDrive: '+e.message);return false}
-  finally{kdBusy=false}
-}
-function kdSchedulePush(){
-  if(!kdCfg())return;
-  kdDirty(true);clearTimeout(kdTimer);
-  kdTimer=setTimeout(()=>{if(navigator.onLine)kdPush(false)},1500);
-}
-async function kdPull(manual){
-  const c=kdCfg();if(!c){if(manual)kdOpen();return}
-  if(kdBusy)return;
-  if(kdDirty()){
-    // Lokale Änderungen noch nicht hochgeladen → nicht überschreiben
-    if(!manual)return kdPush(false);
-    if(!confirm('Auf diesem Gerät gibt es Änderungen, die noch nicht in kDrive sind. Trotzdem mit der kDrive-Version überschreiben?'))return;
-  }
-  kdBusy=true;
-  try{
-    const id=await kdFindFile(c);
-    if(!id){kdBusy=false;if(manual)toast('Noch keine Datei in kDrive – wird jetzt angelegt');if(people.length)await kdPush(manual);return}
-    c.fileId=id;kdSetCfg(c);
-    const d=await (await kdFetch(c,`/2/drive/${c.drive}/files/${id}/download`,{cache:'no-store'})).json();
-    if(!Array.isArray(d))throw new Error('Datei in kDrive ist keine gültige Telefonliste');
-    people=normalizeList(d);
-    try{localStorage.setItem(KEY,JSON.stringify(people))}catch(e){}
-    kdDirty(false);render();
-    if(manual)toast(people.length+' Einträge aus kDrive geladen');
-  }catch(e){toast('kDrive: '+e.message)}
-  finally{kdBusy=false}
-}
-function kdOpen(){
-  const c=kdCfg()||{};
-  $('#kdToken').value=c.token||'';
-  $('#kdUrl').value=c.drive?`…/drive/${c.drive}/files/${c.folder}`:'';
-  $('#kdFile').value=c.file||'telefonliste.json';
-  $('#kdStatus').textContent=c.drive?'Sync ist eingerichtet.':'Sync ist noch nicht eingerichtet.';
-  $('#kdOff').style.visibility=c.drive?'visible':'hidden';
-  $('#kdDlg').classList.add('open');
-}
-$('#kdSave').onclick=async()=>{
-  const st=t=>$('#kdStatus').textContent=t;
-  const token=$('#kdToken').value.trim(),m=$('#kdUrl').value.match(/\/drive\/(\d+)\/files\/(\d+)/);
-  let file=$('#kdFile').value.trim()||'telefonliste.json';if(!/\.json$/i.test(file))file+='.json';
-  if(!token){st('Bitte das Token einfügen.');return}
-  if(!m){st('Ordner-Adresse nicht erkannt. Sie muss …/drive/ZAHL/files/ZAHL enthalten.');return}
-  const c={token,drive:m[1],folder:m[2],file};
-  st('Verbindung wird getestet …');
-  let id;
-  try{id=await kdFindFile(c)}catch(e){st('Fehler: '+e.message);return}
-  kdSetCfg(c);
-  if(id&&(!people.length||confirm('In kDrive gibt es schon „'+file+'“. Diese Liste laden?\n(OK = aus kDrive laden, ersetzt die Liste auf diesem Gerät · Abbrechen = Liste von diesem Gerät nach kDrive speichern)'))){
-    kdDirty(false);await kdPull(true);
-  }else{
-    const ok=await kdPush(false);
-    if(!ok){st('Verbindung ok, aber Speichern in kDrive fehlgeschlagen.');return}
-    toast('Liste in kDrive gespeichert');
-  }
-  close('#kdDlg');
-};
-$('#kdOff').onclick=()=>{
-  if(!confirm('kDrive-Sync auf diesem Gerät ausschalten? (Token wird vom Gerät entfernt, die Datei in kDrive bleibt.)'))return;
-  kdSetCfg(null);kdDirty(false);close('#kdDlg');toast('kDrive-Sync ausgeschaltet');
-};
-window.addEventListener('online',()=>{if(kdCfg()&&kdDirty())kdPush(false)});
-document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible'&&kdCfg()&&!document.querySelector('.overlay.open'))kdPull(false)});
-
 render();
-if(kdCfg()&&navigator.onLine)kdPull(false);
 if('serviceWorker' in navigator&&location.protocol.startsWith('http'))navigator.serviceWorker.register('sw.js').catch(()=>{});
 
 /* ---------- Automatische Aktualisierung ---------- */
 // Bei jeder Änderung an der App wird APP_VERSION und version.json hochgezählt.
 // Die App prüft beim Öffnen, beim Zurückkehren und alle 5 Minuten und lädt sich dann neu.
-const APP_VERSION='2026-10-14.5';
+const APP_VERSION='2026-10-14.6';
 let updatePending=false;
 function busy(){return document.querySelector('.overlay.open')} // nicht mitten im Bearbeiten neu laden
 async function checkUpdate(){
