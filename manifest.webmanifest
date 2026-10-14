@@ -1,0 +1,9 @@
+{
+  "name": "Riesebyer Telefonliste",
+  "short_name": "Telefonliste",
+  "start_url": "./",
+  "display": "standalone",
+  "background_color": "#061a3a",
+  "theme_color": "#0b3d91",
+  "icons": [{ "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }]
+}
