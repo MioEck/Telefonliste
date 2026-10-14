@@ -507,6 +507,37 @@ $('#impApply').onclick=()=>{
 
 render();
 if('serviceWorker' in navigator&&location.protocol.startsWith('http'))navigator.serviceWorker.register('sw.js').catch(()=>{});
+
+/* ---------- Automatische Aktualisierung ---------- */
+// Bei jeder Änderung an der App wird APP_VERSION und version.json hochgezählt.
+// Die App prüft beim Öffnen, beim Zurückkehren und alle 5 Minuten und lädt sich dann neu.
+const APP_VERSION='2026-10-14.4';
+let updatePending=false;
+function busy(){return document.querySelector('.overlay.open')} // nicht mitten im Bearbeiten neu laden
+async function checkUpdate(){
+  if(!location.protocol.startsWith('http'))return;
+  try{
+    const r=await fetch('version.json?t='+Date.now(),{cache:'no-store'});if(!r.ok)return;
+    const {version}=await r.json();
+    if(!version||version===APP_VERSION)return;
+    // Schutz vor Neuladeschleife, falls der Server kurzzeitig noch die alte Seite liefert
+    let tried={};try{tried=JSON.parse(sessionStorage.getItem('upd'))||{}}catch(e){}
+    if(tried.v===version&&Date.now()-tried.t<120000)return;
+    try{sessionStorage.setItem('upd',JSON.stringify({v:version,t:Date.now()}))}catch(e){}
+    updatePending=true;if(!busy())applyUpdate();
+  }catch(e){}
+}
+function applyUpdate(){
+  toast('Neue Version – wird geladen …');
+  const reg=navigator.serviceWorker&&navigator.serviceWorker.getRegistration();
+  Promise.resolve(reg).then(r=>r&&r.update()).catch(()=>{}).finally(()=>setTimeout(()=>location.reload(),600));
+}
+new MutationObserver(()=>{if(updatePending&&!busy())applyUpdate()})
+  .observe(document.body,{subtree:true,attributes:true,attributeFilter:['class']});
+document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible')checkUpdate()});
+window.addEventListener('focus',checkUpdate);
+setInterval(checkUpdate,5*60*1000);
+checkUpdate();
 </script>
 </body>
 </html>
