@@ -95,10 +95,12 @@ textarea{min-height:110px;resize:vertical}
 .hint{font-size:.85rem;color:var(--muted);margin:6px 2px 12px}
 .progress{height:8px;border-radius:8px;background:rgba(255,255,255,.15);overflow:hidden;margin:10px 0}
 .progress>div{height:100%;width:0;background:linear-gradient(90deg,#38bdf8,#818cf8);transition:width .2s}
-.review{width:100%;border-collapse:collapse;font-size:.9rem}
-.review td{padding:4px 3px;vertical-align:top}
-.review input{padding:7px 8px;font-size:.9rem}
-.review .chk{width:22px;height:22px}
+.rv{display:grid;grid-template-columns:28px 1fr 1fr;gap:6px;padding:10px;margin-bottom:8px;border-radius:14px;background:rgba(255,255,255,.07);border:1px solid var(--border)}
+.rv.off{opacity:.45}
+.rv input{padding:7px 8px;font-size:.9rem}
+.rv .chk{width:22px;height:22px;grid-row:span 4;align-self:start}
+.rv .wide{grid-column:2/4}
+.chk{width:22px;height:22px}
 .toast{position:fixed;left:50%;bottom:calc(24px + env(safe-area-inset-bottom));transform:translateX(-50%);
   padding:10px 18px;z-index:20;display:none}
 .menu{position:absolute;right:16px;top:70px;padding:8px;display:none;z-index:5;min-width:230px}
@@ -171,8 +173,9 @@ svg{width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:2;stroke-l
       <div class="progress"><div id="impBar"></div></div>
     </div>
     <div id="impStep2" style="display:none">
-      <p class="hint">Erkannte Einträge – bitte prüfen. Nur angehakte Zeilen werden übernommen. Nummern mit Komma trennen.</p>
-      <div style="overflow-x:auto"><table class="review"><thead><tr><td></td><td>Name</td><td>Nummern</td></tr></thead><tbody id="impRows"></tbody></table></div>
+      <p class="hint">Erkannte Einträge – bitte prüfen. Nur angehakte Einträge werden übernommen (durchgestrichene Zeilen der Liste bitte abhaken). Mehrere Nummern mit Komma trennen, Bezeichnung in Klammern, z. B. „0162-123456 (Arbeit)“.</p>
+      <div id="impRows"></div>
+      <label class="hint" style="display:flex;gap:8px;align-items:center;margin-top:12px"><input type="checkbox" id="impReplace" class="chk" style="width:22px"> Vorhandene Einträge vorher löschen (Liste komplett ersetzen)</label>
       <details style="margin-top:12px"><summary class="hint" style="cursor:pointer">Erkannter Rohtext anzeigen</summary><textarea id="impRaw" readonly style="min-height:160px;font-size:.8rem"></textarea></details>
       <div class="actions">
         <button class="btn" id="impBack">Andere Datei</button>
@@ -318,7 +321,7 @@ const PDFJS='https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js';
 const PDFW='https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
 
 function openImport(){$('#impStep1').style.display='';$('#impStep2').style.display='none';$('#impStatus').textContent='';
-  $('#impBar').style.width='0';$('#impFile').value='';$('#importDlg').classList.add('open')}
+  $('#impBar').style.width='0';$('#impFile').value='';$('#impReplace').checked=false;$('#importDlg').classList.add('open')}
 function status(t,p){$('#impStatus').textContent=t;if(p!=null)$('#impBar').style.width=Math.round(p*100)+'%'}
 
 let worker=null;
@@ -360,25 +363,62 @@ function classify(num,idx){
   if(d.length<=5)return 'Durchwahl';
   return idx===0?'Telefon':'Sonstige';
 }
+const EMAIL_RE=/[A-Za-z0-9._%+\-]+ ?@ ?[A-Za-z0-9\-]+(?:\.[A-Za-z0-9\-]+)*\.[A-Za-z]{2,}/g;
+const PLATE_RE=/\b[A-ZÄÖÜ]{1,3} ?- ?[A-Z]{1,2} ?\d{1,4}\b/;
+const NOTE_RE=/\( ?[\d+*][\d+* ]*\)?/g;           // z. B. "(48+1****)"
+const CAP_WORD=/^[A-ZÄÖÜ][a-zäöüßéèáàëïç]+(?:-[A-ZÄÖÜ][a-zäöüßéèáàëïç]+)*$/;
 function parseLines(text){
-  const res=[];
+  const res=[];let section='';
   for(let line of text.split(/\r?\n/)){
-    line=line.replace(/[|_]+/g,' ').trim();if(!line)continue;
-    // Spalten (2+ Leerzeichen / Tab) getrennt auswerten, damit Nummern nicht verschmelzen
-    const nums=line.split(/\t| {2,}/).flatMap(c=>c.match(NUM_RE)||[]).map(s=>s.trim()).filter(s=>s.replace(/\D/g,'').length>=2);
-    if(!nums.length)continue;
-    let name=line;nums.forEach(n=>name=name.replace(n,' '));
-    name=name.replace(/[^A-Za-zÄÖÜäöüß.\-, ]/g,' ').replace(/\s+/g,' ').replace(/^[\s,.\-]+|[\s,.\-]+$/g,'');
-    if(!/[A-Za-zÄÖÜäöüß]{2,}/.test(name))continue;
-    res.push({name,numbers:nums,checked:true});
+    line=line.replace(/[|—–]+/g,' ').trim();if(!line)continue;
+    // E-Mail zuerst herauslösen, damit sie nicht im Namen landet
+    const emails=(line.match(EMAIL_RE)||[]).map(e=>e.replace(/\s/g,''));
+    emails.forEach(e=>line=line.replace(EMAIL_RE,'  '));
+    const plateM=line.match(PLATE_RE);const plate=plateM?plateM[0].replace(/\s/g,'').replace(/([A-Z])(\d)/,'$1 $2'):'';
+    if(plateM)line=line.replace(plateM[0],'  ');
+    const notes=(line.match(NOTE_RE)||[]).map(n=>n.trim()).filter(n=>/\d/.test(n));
+    line=line.replace(NOTE_RE,'  ');
+    // Nummern spaltenweise (2+ Leerzeichen / Tab), Bezeichnung in Klammern dahinter übernehmen
+    const numbers=[];
+    for(const col of line.split(/\t| {2,}/)){
+      let m;const re=new RegExp(NUM_RE.source,'g');
+      while((m=re.exec(col))){
+        const n=m[0].trim();if(n.replace(/\D/g,'').length<2)continue;
+        const lab=col.slice(m.index+m[0].length).match(/^\s*\(([A-Za-zÄÖÜäöüß]+)\)/);
+        numbers.push({number:n,label:lab?lab[1]:''});
+      }
+    }
+    if(!numbers.length){
+      const h=line.match(/^([A-ZÄÖÜ][a-zäöüß]+)\s*:/); // Abschnitt, z. B. "Fahrer:" / "Büro:"
+      if(h&&!emails.length)section=h[1];
+      continue;
+    }
+    // Namen bestimmen: Text ohne Nummern, "Nachname, Vorname"
+    let rest=line;numbers.forEach(n=>rest=rest.replace(n.number,' '));
+    rest=rest.replace(/\(([A-Za-zÄÖÜäöüß]+)\)/g,' ').replace(/[^A-Za-zÄÖÜäöüßéèáàëïç\-, ]/g,' ').replace(/\s+/g,' ').trim();
+    let last='',first='';
+    if(rest.includes(',')){
+      const [a,b]=rest.split(/,(.*)/s);
+      const lw=a.trim().split(' ').filter(w=>CAP_WORD.test(w));last=lw[lw.length-1]||a.trim();
+      const fw=[];for(const w of (b||'').trim().split(' ')){if(CAP_WORD.test(w))fw.push(w);else break}
+      first=fw.join(' ');
+    }else{
+      const ws=rest.split(' ').filter(w=>CAP_WORD.test(w)).slice(0,3);
+      if(ws.length>1){first=ws.slice(0,-1).join(' ');last=ws[ws.length-1]}else last=ws[0]||'';
+    }
+    if(!last&&!first)continue;
+    const dept=[section,plate].filter(Boolean).join(' · ');
+    const ok=numbers.some(n=>n.number.replace(/\D/g,'').length>=3);
+    res.push({last,first,dept,numbers,email:emails[0]||'',notes:notes.length?'Laut Liste: '+notes.join(' '):'',checked:ok});
   }
   return res;
 }
-function splitName(n){
-  if(n.includes(',')){const [l,f]=n.split(',');return {first:(f||'').trim(),last:l.trim()}}
-  const parts=n.trim().split(/\s+/);
-  if(parts.length===1)return {first:'',last:parts[0]};
-  return {first:parts.slice(0,-1).join(' '),last:parts[parts.length-1]};
+function numsToText(nums){return nums.map(n=>n.number+(n.label?' ('+n.label+')':'')).join(', ')}
+function textToNums(t){
+  return t.split(',').map(s=>s.trim()).filter(Boolean).map((s,i)=>{
+    const m=s.match(/^(.*?)\s*\(([^)]+)\)\s*$/);const number=(m?m[1]:s).trim();
+    return {number,label:m?m[2].trim():classify(number,i)};
+  }).filter(n=>n.number);
 }
 
 $('#impFile').onchange=async e=>{
@@ -393,24 +433,37 @@ $('#impFile').onchange=async e=>{
   status('Fertig',1);
   const rows=parseLines(text);
   $('#impRaw').value=text;
-  $('#impRows').innerHTML=rows.length?rows.map(r=>`<tr><td><input type="checkbox" class="chk" checked></td>
-    <td><input value="${esc(r.name)}"></td><td><input value="${esc(r.numbers.join(', '))}"></td></tr>`).join('')
-    :'<tr><td colspan="3" class="hint">Keine Einträge erkannt. Prüfe den Rohtext unten oder versuche ein schärferes Bild.</td></tr>';
+  $('#impRows').innerHTML=rows.length?rows.map(r=>`<div class="rv${r.checked?'':' off'}">
+    <input type="checkbox" class="chk"${r.checked?' checked':''}>
+    <input data-f="last" value="${esc(r.last)}" placeholder="Nachname">
+    <input data-f="first" value="${esc(r.first)}" placeholder="Vorname">
+    <input data-f="nums" class="wide" value="${esc(numsToText(r.numbers))}" placeholder="Nummern">
+    <input data-f="email" value="${esc(r.email)}" placeholder="E-Mail" inputmode="email">
+    <input data-f="dept" value="${esc(r.dept)}" placeholder="Abteilung">
+    <input data-f="notes" class="wide" value="${esc(r.notes)}" placeholder="Notiz">
+  </div>`).join('')
+    :'<p class="hint">Keine Einträge erkannt. Prüfe den Rohtext unten oder versuche ein schärferes Bild.</p>';
+  $('#impRows').querySelectorAll('.rv .chk').forEach(c=>c.onchange=()=>c.parentNode.classList.toggle('off',!c.checked));
   $('#impStep1').style.display='none';$('#impStep2').style.display='';
 };
 $('#impBack').onclick=openImport;
 $('#impApply').onclick=()=>{
   let added=0,updated=0;
-  for(const tr of $('#impRows').querySelectorAll('tr')){
-    const [chk,nameI,numI]=tr.querySelectorAll('input');if(!chk||!chk.checked)continue;
-    const name=nameI.value.trim();if(!name)continue;
-    const nums=numI.value.split(',').map(s=>s.trim()).filter(Boolean).map((n,i)=>({label:classify(n,i),number:n}));
-    const {first,last}=splitName(name);
+  if($('#impReplace').checked){
+    if(!confirm('Alle vorhandenen Einträge löschen und durch den Import ersetzen?'))return;
+    people=[];
+  }
+  for(const rv of $('#impRows').querySelectorAll('.rv')){
+    if(!rv.querySelector('.chk').checked)continue;
+    const v=f=>rv.querySelector(`[data-f="${f}"]`).value.trim();
+    const first=v('first'),last=v('last');if(!first&&!last)continue;
+    const nums=textToNums(v('nums')),email=v('email'),dept=v('dept'),notes=v('notes');
     const ex=people.find(p=>(p.first||'').toLowerCase()===first.toLowerCase()&&(p.last||'').toLowerCase()===last.toLowerCase());
     if(ex){ // vorhandenen Kollegen ergänzen, nichts überschreiben
       for(const n of nums)if(!ex.numbers.some(m=>m.number.replace(/\D/g,'')===n.number.replace(/\D/g,'')))ex.numbers.push(n);
+      if(!ex.email)ex.email=email;if(!ex.dept)ex.dept=dept;if(!ex.notes)ex.notes=notes;
       updated++;
-    }else{people.push({id:uid(),first,last,dept:'',numbers:nums,email:'',birth:'',notes:''});added++}
+    }else{people.push({id:uid(),first,last,dept,numbers:nums,email,birth:'',notes});added++}
   }
   persist();render();close('#importDlg');toast(added+' neu, '+updated+' ergänzt');
 };
