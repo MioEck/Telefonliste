@@ -59,6 +59,14 @@ input:focus,textarea:focus,select:focus{border-color:var(--accent);background:rg
 select option{color:#000}
 .list{padding:6px}
 .letter{font-size:.8rem;color:var(--accent);padding:10px 12px 4px;font-weight:600}
+.group{display:flex;align-items:center;gap:8px;padding:14px 12px 6px;font-size:1rem;font-weight:700;letter-spacing:.3px;border-bottom:1px solid var(--border);margin:0 4px 4px}
+.group:first-child{padding-top:8px}
+.group span{font-size:.75rem;font-weight:600;color:var(--muted);background:rgba(255,255,255,.12);border-radius:10px;padding:2px 8px}
+.chips{display:flex;gap:6px;overflow-x:auto;padding:0 2px 12px;scrollbar-width:none}
+.chips::-webkit-scrollbar{display:none}
+.chip{flex:none;border:1px solid var(--border);background:var(--glass);color:var(--text);border-radius:999px;padding:7px 14px;font-size:.9rem;cursor:pointer;
+  backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px)}
+.chip.on{background:linear-gradient(135deg,#3b82f6,#06b6d4);border-color:transparent}
 .item{display:flex;align-items:center;gap:12px;padding:10px 12px;border-radius:14px;cursor:pointer}
 .item:hover,.item:active{background:rgba(255,255,255,.1)}
 .avatar{
@@ -98,7 +106,7 @@ textarea{min-height:110px;resize:vertical}
 .rv{display:grid;grid-template-columns:28px 1fr 1fr;gap:6px;padding:10px;margin-bottom:8px;border-radius:14px;background:rgba(255,255,255,.07);border:1px solid var(--border)}
 .rv.off{opacity:.45}
 .rv input{padding:7px 8px;font-size:.9rem}
-.rv .chk{width:22px;height:22px;grid-row:span 4;align-self:start}
+.rv .chk{width:22px;height:22px;grid-row:span 5;align-self:start}
 .rv .wide{grid-column:2/4}
 .chk{width:22px;height:22px}
 .toast{position:fixed;left:50%;bottom:calc(24px + env(safe-area-inset-bottom));transform:translateX(-50%);
@@ -126,6 +134,7 @@ svg{width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:2;stroke-l
   <div class="search glass">
     <input id="q" type="search" placeholder="Suchen: Name, Nummer, Abteilung …" autocomplete="off">
   </div>
+  <div class="chips" id="chips"></div>
   <div class="list glass" id="list"></div>
 </div>
 
@@ -141,7 +150,11 @@ svg{width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:2;stroke-l
       <div class="field"><label>Vorname</label><input id="fFirst"></div>
       <div class="field"><label>Nachname</label><input id="fLast"></div>
     </div>
-    <div class="field"><label>Abteilung / Funktion</label><input id="fDept"></div>
+    <div class="grid2">
+      <div class="field"><label>Bereich</label><input id="fGroup" list="groupList" placeholder="Fahrer, Büro, Aushilfen …"></div>
+      <div class="field"><label>Kennzeichen / Funktion</label><input id="fDept"></div>
+    </div>
+    <datalist id="groupList"></datalist>
     <div class="field">
       <label>Telefonnummern (📞 tippen = anrufen)</label>
       <div id="fNums"></div>
@@ -194,7 +207,17 @@ const $=s=>document.querySelector(s);
 let people=load();
 let current=null;
 
-function load(){try{return JSON.parse(localStorage.getItem(KEY))||[]}catch(e){return []}}
+const GROUPS=['Fahrer','Büro','Aushilfen'];
+let filter=(()=>{try{return localStorage.getItem(KEY+'-filter')||''}catch(e){return ''}})();
+function normGroup(g){g=(g||'').trim();if(/^aushilfe/i.test(g))return 'Aushilfen';if(/^fahrer/i.test(g))return 'Fahrer';if(/^b(ü|ue)ro/i.test(g))return 'Büro';return g}
+function migrate(p){ // ältere Einträge: Bereich steckte in "Abteilung", z. B. "Fahrer · RD-RI 888"
+  if(p.group===undefined){
+    const m=(p.dept||'').match(/^\s*(Fahrer|Büro|Aushilfen?)\b\s*(?:·\s*)?(.*)$/i);
+    p.group=m?normGroup(m[1]):'';if(m)p.dept=m[2].trim();
+  }
+  return p;
+}
+function load(){try{return (JSON.parse(localStorage.getItem(KEY))||[]).map(migrate)}catch(e){return []}}
 function persist(){try{localStorage.setItem(KEY,JSON.stringify(people))}catch(e){toast('Speichern fehlgeschlagen')}}
 function uid(){return Date.now().toString(36)+Math.random().toString(36).slice(2,7)}
 function esc(s){return String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
@@ -207,34 +230,47 @@ const ICON_CALL='<svg viewBox="0 0 24 24"><path d="M22 16.9v3a2 2 0 0 1-2.2 2 19
 /* ---------- Liste ---------- */
 function render(){
   const q=$('#q').value.trim().toLowerCase();
-  const sorted=[...people].sort((a,b)=>(a.last||a.first||'').localeCompare(b.last||b.first||'','de'));
-  const list=sorted.filter(p=>!q||[p.first,p.last,p.dept,p.email,p.notes,...(p.numbers||[]).map(n=>n.number)]
-    .join(' ').toLowerCase().includes(q));
+  const sorted=[...people].sort((a,b)=>(a.last||a.first||'').localeCompare(b.last||b.first||'','de')||(a.first||'').localeCompare(b.first||'','de'));
+  // Bereiche: feste Reihenfolge, danach weitere, zuletzt ohne Bereich
+  const extra=[...new Set(people.map(p=>p.group||'').filter(g=>g&&!GROUPS.includes(g)))].sort((a,b)=>a.localeCompare(b,'de'));
+  const groups=[...GROUPS.filter(g=>people.some(p=>p.group===g)),...extra];
+  if(filter&&!groups.includes(filter)&&filter!=='-')filter='';
+  const hasNone=people.some(p=>!p.group);
+  $('#chips').innerHTML=people.length&&groups.length?['',...groups,...(hasNone?['-']:[])].map(g=>
+    `<button class="chip${g===filter?' on':''}" data-g="${esc(g)}">${g===''?'Alle':g==='-'?'Ohne Bereich':esc(g)} <small>${g===''?people.length:people.filter(p=>(p.group||'-')===g).length}</small></button>`).join(''):'';
+  $('#groupList').innerHTML=[...GROUPS,...extra].map(g=>`<option value="${esc(g)}">`).join('');
+  const list=sorted.filter(p=>(!filter||(p.group||'-')===filter)&&(!q||[p.first,p.last,p.group,p.dept,p.email,p.notes,...(p.numbers||[]).map(n=>n.number)]
+    .join(' ').toLowerCase().includes(q)));
   $('#count').textContent=people.length+(people.length===1?' Kollege':' Kollegen');
   if(!people.length){
     $('#list').innerHTML='<div class="empty"><b>Noch keine Einträge.</b><br><br>Über ⋮ → <i>Telefonliste importieren</i> ein Bild oder PDF einlesen oder mit + einen Kollegen anlegen.<br><br><button class="btn primary" onclick="openImport()">Telefonliste importieren</button></div>';
     return;
   }
   if(!list.length){$('#list').innerHTML='<div class="empty">Keine Treffer.</div>';return}
-  let html='',last='';
-  for(const p of list){
-    const L=((p.last||p.first||'#')[0]||'#').toUpperCase();
-    if(L!==last){html+=`<div class="letter">${esc(L)}</div>`;last=L}
+  let html='';
+  for(const g of [...groups,'']){
+    const members=list.filter(p=>(p.group||'')===g);if(!members.length)continue;
+    if(groups.length)html+=`<div class="group">${g?esc(g):'Ohne Bereich'}<span>${members.length}</span></div>`;
+    for(const p of members)html+=itemHTML(p);
+  }
+  $('#list').innerHTML=html;
+}
+function itemHTML(p){
     const main=(p.numbers||[]).find(n=>n.number);
-    html+=`<div class="item" data-id="${p.id}">
+    return `<div class="item" data-id="${p.id}">
       <div class="avatar">${esc(initials(p).toUpperCase())}</div>
       <div class="info"><div class="name">${esc(fullName(p))}</div>
       <div class="sub">${esc([p.dept,main&&main.number].filter(Boolean).join(' · '))}</div></div>
       ${main?`<a class="call" href="${telHref(main.number)}" title="${esc(main.number)} anrufen">${ICON_CALL}</a>`:''}
     </div>`;
-  }
-  $('#list').innerHTML=html;
 }
 $('#list').addEventListener('click',e=>{
   if(e.target.closest('.call'))return; // Link startet Anruf
   const it=e.target.closest('.item');if(it)openDetail(it.dataset.id);
 });
 $('#q').addEventListener('input',render);
+$('#chips').addEventListener('click',e=>{const c=e.target.closest('.chip');if(!c)return;
+  filter=c.dataset.g;try{localStorage.setItem(KEY+'-filter',filter)}catch(err){}render()});
 
 /* ---------- Detail ---------- */
 const LABELS=['Durchwahl','Telefon','Mobil','Privat','Fax','Sonstige'];
@@ -251,13 +287,13 @@ function numRow(n={label:'Telefon',number:''}){
   return d;
 }
 function openDetail(id){
-  current=id?people.find(p=>p.id===id):{id:null,first:'',last:'',dept:'',numbers:[],email:'',birth:'',notes:''};
+  current=id?people.find(p=>p.id===id):{id:null,first:'',last:'',group:filter&&filter!=='-'?filter:'',dept:'',numbers:[],email:'',birth:'',notes:''};
   if(!current)return;
   const p=current;
   $('#dTitle').textContent=id?fullName(p):'Neuer Kollege';
   $('#dSub').textContent=p.birth?'Geburtstag: '+new Date(p.birth+'T00:00').toLocaleDateString('de-DE',{day:'2-digit',month:'long',year:'numeric'}):'';
   $('#dAvatar').textContent=id?initials(p).toUpperCase():'+';
-  $('#fFirst').value=p.first||'';$('#fLast').value=p.last||'';$('#fDept').value=p.dept||'';
+  $('#fFirst').value=p.first||'';$('#fLast').value=p.last||'';$('#fDept').value=p.dept||'';$('#fGroup').value=p.group||'';
   $('#fMail').value=p.email||'';$('#fBirth').value=p.birth||'';$('#fNotes').value=p.notes||'';
   updMail();
   const box=$('#fNums');box.innerHTML='';
@@ -270,7 +306,7 @@ $('#fMail').addEventListener('input',updMail);
 $('#addNum').onclick=()=>$('#fNums').appendChild(numRow({label:'Mobil',number:''}));
 $('#saveBtn').onclick=()=>{
   const data={
-    first:$('#fFirst').value.trim(),last:$('#fLast').value.trim(),dept:$('#fDept').value.trim(),
+    first:$('#fFirst').value.trim(),last:$('#fLast').value.trim(),group:normGroup($('#fGroup').value),dept:$('#fDept').value.trim(),
     email:$('#fMail').value.trim(),birth:$('#fBirth').value,notes:$('#fNotes').value,
     numbers:[...$('#fNums').children].map(r=>({label:r.querySelector('select').value,number:r.querySelector('input').value.trim()})).filter(n=>n.number)
   };
@@ -307,7 +343,7 @@ function exportJSON(){
 $('#restoreFile').onchange=async e=>{
   const f=e.target.files[0];if(!f)return;
   try{const d=JSON.parse(await f.text());if(!Array.isArray(d))throw 0;
-    people=d.map(p=>({id:p.id||uid(),first:p.first||'',last:p.last||'',dept:p.dept||'',numbers:Array.isArray(p.numbers)?p.numbers:[],email:p.email||'',birth:p.birth||'',notes:p.notes||''}));
+    people=d.map(p=>({id:p.id||uid(),first:p.first||'',last:p.last||'',group:p.group,dept:p.dept||'',numbers:Array.isArray(p.numbers)?p.numbers:[],email:p.email||'',birth:p.birth||'',notes:p.notes||''})).map(migrate);
     persist();render();toast(people.length+' Einträge geladen');
   }catch(err){toast('Ungültige Sicherungsdatei')}
   e.target.value='';
@@ -407,9 +443,9 @@ function parseLines(text){
       if(ws.length>1){first=ws.slice(0,-1).join(' ');last=ws[ws.length-1]}else last=ws[0]||'';
     }
     if(!last&&!first)continue;
-    const dept=[section,plate].filter(Boolean).join(' · ');
+    const group=normGroup(section),dept=plate;
     const ok=numbers.some(n=>n.number.replace(/\D/g,'').length>=3);
-    res.push({last,first,dept,numbers,email:emails[0]||'',notes:notes.length?'Laut Liste: '+notes.join(' '):'',checked:ok});
+    res.push({last,first,group,dept,numbers,email:emails[0]||'',notes:notes.length?'Laut Liste: '+notes.join(' '):'',checked:ok});
   }
   return res;
 }
@@ -439,7 +475,8 @@ $('#impFile').onchange=async e=>{
     <input data-f="first" value="${esc(r.first)}" placeholder="Vorname">
     <input data-f="nums" class="wide" value="${esc(numsToText(r.numbers))}" placeholder="Nummern">
     <input data-f="email" value="${esc(r.email)}" placeholder="E-Mail" inputmode="email">
-    <input data-f="dept" value="${esc(r.dept)}" placeholder="Abteilung">
+    <input data-f="group" value="${esc(r.group)}" placeholder="Bereich" list="groupList">
+    <input data-f="dept" class="wide" value="${esc(r.dept)}" placeholder="Kennzeichen / Funktion">
     <input data-f="notes" class="wide" value="${esc(r.notes)}" placeholder="Notiz">
   </div>`).join('')
     :'<p class="hint">Keine Einträge erkannt. Prüfe den Rohtext unten oder versuche ein schärferes Bild.</p>';
@@ -457,13 +494,13 @@ $('#impApply').onclick=()=>{
     if(!rv.querySelector('.chk').checked)continue;
     const v=f=>rv.querySelector(`[data-f="${f}"]`).value.trim();
     const first=v('first'),last=v('last');if(!first&&!last)continue;
-    const nums=textToNums(v('nums')),email=v('email'),dept=v('dept'),notes=v('notes');
+    const nums=textToNums(v('nums')),email=v('email'),group=normGroup(v('group')),dept=v('dept'),notes=v('notes');
     const ex=people.find(p=>(p.first||'').toLowerCase()===first.toLowerCase()&&(p.last||'').toLowerCase()===last.toLowerCase());
     if(ex){ // vorhandenen Kollegen ergänzen, nichts überschreiben
       for(const n of nums)if(!ex.numbers.some(m=>m.number.replace(/\D/g,'')===n.number.replace(/\D/g,'')))ex.numbers.push(n);
-      if(!ex.email)ex.email=email;if(!ex.dept)ex.dept=dept;if(!ex.notes)ex.notes=notes;
+      if(!ex.email)ex.email=email;if(!ex.dept)ex.dept=dept;if(!ex.group)ex.group=group;if(!ex.notes)ex.notes=notes;
       updated++;
-    }else{people.push({id:uid(),first,last,dept,numbers:nums,email,birth:'',notes});added++}
+    }else{people.push({id:uid(),first,last,group,dept,numbers:nums,email,birth:'',notes});added++}
   }
   persist();render();close('#importDlg');toast(added+' neu, '+updated+' ergänzt');
 };
