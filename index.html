@@ -201,7 +201,8 @@ svg{width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:2;stroke-l
   </div>
 </div>
 
-<input type="file" id="restoreFile" accept="application/json,.json" hidden>
+<!-- kein accept-Filter: iOS graut .json aus Cloud-Ordnern (z. B. kDrive) sonst aus; Inhalt wird beim Laden geprüft -->
+<input type="file" id="restoreFile" hidden>
 <div class="toast glass" id="toast"></div>
 
 <script>
@@ -514,7 +515,7 @@ if('serviceWorker' in navigator&&location.protocol.startsWith('http'))navigator.
 /* ---------- Automatische Aktualisierung ---------- */
 // Bei jeder Änderung an der App wird APP_VERSION und version.json hochgezählt.
 // Die App prüft beim Öffnen, beim Zurückkehren und alle 5 Minuten und lädt sich dann neu.
-const APP_VERSION='2026-10-15.1';
+const APP_VERSION='2026-10-15.2';
 let updatePending=false;
 function busy(){return document.querySelector('.overlay.open')} // nicht mitten im Bearbeiten neu laden
 async function checkUpdate(){
