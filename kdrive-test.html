@@ -19,6 +19,8 @@
 <small>Redirect-URL dieser Seite (muss in der Infomaniak-Anwendung eingetragen sein):</small>
 <pre id="ru"></pre>
 
+<small>Scopes (durch Leerzeichen getrennt):</small>
+<input id="sc" value="openid user_info drive" style="width:100%;padding:10px;font-size:1rem;box-sizing:border-box;border:1px solid #ccd;border-radius:8px">
 <button id="login">1. Mit Infomaniak anmelden</button>
 <button id="t1" class="sec">2. Test: Profil abrufen</button>
 <button id="t2" class="sec">3. Test: kDrive-Liste abrufen</button>
@@ -65,8 +67,10 @@ document.getElementById("login").onclick = async () => {
     redirect_uri: REDIRECT,
     code_challenge: challenge,
     code_challenge_method: "S256",
-    state: state
+    state: state,
+    scope: document.getElementById("sc").value.trim()
   });
+  log("Scopes: " + document.getElementById("sc").value);
   location.href = AUTH + "?" + p.toString();
 };
 
